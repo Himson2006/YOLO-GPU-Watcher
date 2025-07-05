@@ -5,7 +5,7 @@ class Config:
     # point this at your Postgres on VM 1
     SQLALCHEMY_DATABASE_URI = os.environ.get(
         "DATABASE_URL",
-        "postgresql://yolo_user:yolo_pass@VM1_IP:5432/yolo_db"
+        "postgresql://yolo_user:yolo_pass@V20.14.93.39:5432/yolo_db"
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
