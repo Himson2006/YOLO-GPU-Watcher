@@ -1,47 +1,40 @@
-import os
-import time
-import cv2
-import torch
+import os, time, cv2, torch
 from ultralytics import YOLO
 
 def run_detection(
     input_source: str,
     model_path: str,
-    conf_thres: float = 0.5,
-    iou_thres: float = 0.5,
+    conf_thres: float    = 0.5,
+    iou_thres: float     = 0.5,
     frame_threshold: int = 10,
-    gap_tolerance: int = 3,
+    gap_tolerance: int   = 3,
 ):
-    # ── wait until the file stops growing ─────────────────────────
-    last_size = -1
-    stable = 0
+    # ── 0) wait for file to finish copying ─────────
+    last, stable = -1, 0
     while stable < 2:
         try:
-            size = os.path.getsize(input_source)
+            sz = os.path.getsize(input_source)
         except OSError:
-            time.sleep(1)
-            continue
-        if size == last_size:
+            time.sleep(1); continue
+        if sz == last:
             stable += 1
         else:
-            last_size = size
-            stable = 0
+            last, stable = sz, 0
         time.sleep(1)
 
-    # ── load YOLO + push to GPU if available ─────────────────────
-    model = YOLO(model_path)
+    # ── 1) load model & move to GPU if available ────
+    model  = YOLO(model_path)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.model.to(device)
     if device == "cuda":
         torch.backends.cudnn.benchmark = True
 
-    # ── open video ────────────────────────────────────────────────
+    # ── 2) open video ───────────────────────────────
     cap = cv2.VideoCapture(input_source)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open {input_source!r}")
 
-    records = []
-    frame_idx = 0
+    records, frame_idx = [], 0
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -57,16 +50,18 @@ def run_detection(
         )[0]
 
         dets = []
-        for box, conf, cls in zip(res.boxes.xyxy, res.boxes.conf, res.boxes.cls):
-            c = float(conf)
-            if c < conf_thres:
+        for box, conf, cls in zip(
+            res.boxes.xyxy, res.boxes.conf, res.boxes.cls
+        ):
+            cval = float(conf)
+            if cval < conf_thres:
                 continue
             x1, y1, x2, y2 = map(float, box)
             dets.append({
-                "bbox":       [x1, y1, x2, y2],
-                "confidence": c,
-                "class_id":   int(cls),
-                "class_name": model.names[int(cls)]
+                "bbox":        [x1, y1, x2, y2],
+                "confidence":  cval,
+                "class_id":    int(cls),
+                "class_name":  model.names[int(cls)]
             })
 
         records.append({
@@ -77,9 +72,8 @@ def run_detection(
         })
 
     cap.release()
-    cv2.destroyAllWindows()
 
-    # ── run‐length filtering ────────────────────────────────────────
+    # ── 3) run-length filtering by class ────────────
     class_to_frames = {}
     for rec in records:
         for d in rec["detections"]:
@@ -87,10 +81,9 @@ def run_detection(
 
     valid_frames_per_class = {}
     for cls_name, frames in class_to_frames.items():
-        seq = sorted(frames)
-        run = [seq[0]]
-        good = set()
-        for f in seq[1:]:
+        sorted_f = sorted(frames)
+        run, good = [sorted_f[0]], set()
+        for f in sorted_f[1:]:
             if f - run[-1] <= gap_tolerance + 1:
                 run.append(f)
             else:
@@ -101,6 +94,7 @@ def run_detection(
             good.update(run)
         valid_frames_per_class[cls_name] = good
 
+    # ── 4) apply filter ────────────────────────────
     filtered = []
     for rec in records:
         fidx = rec["frame"]

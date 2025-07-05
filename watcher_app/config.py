@@ -1,11 +1,16 @@
 import os
+basedir = os.path.abspath(os.path.dirname(__file__))
 
 class Config:
-    # must be set in your environment:
-    SQLALCHEMY_DATABASE_URI = os.environ["DATABASE_URL"]
+    # must be set in env
+    SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL")
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    # must point at your “incoming” folder
-    WATCH_FOLDER      = os.environ["WATCH_FOLDER"]
-    # must point at best.pt on your GPU VM
-    YOLO_MODEL_PATH   = os.environ["YOLO_MODEL_PATH"]
+    # where to watch (env override or default to incoming/)
+    WATCH_FOLDER = os.environ.get(
+        "WATCH_FOLDER",
+        os.path.join(basedir, os.pardir, "incoming")
+    )
+
+    # where your best.pt lives
+    YOLO_MODEL_PATH = os.environ.get("YOLO_MODEL_PATH")
