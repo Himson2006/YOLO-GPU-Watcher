@@ -1,14 +1,18 @@
 #!/usr/bin/env python
-import os, time, json
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.exc import IntegrityError
+import os, sys
 
-from config     import Config
-from models     import Base, Video, Detection
-from detection  import run_detection
+# ⬇ make sure Python will import config.py, models.py, detection.py from here
+sys.path.insert(0, os.path.dirname(__file__))
+
+import time, json
+from watchdog.observers import Observer
+from watchdog.events    import FileSystemEventHandler
+from sqlalchemy.exc     import IntegrityError
+
+from config    import Config
+from models    import db, Video, Detection
+from detection import run_detection
+from flask     import Flask
 
 # —── Database setup ─────────────────────────────────────
 engine = create_engine(Config.DATABASE_URL)
