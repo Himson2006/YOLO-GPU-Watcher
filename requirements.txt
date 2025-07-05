@@ -1,9 +1,7 @@
-flask
-flask_sqlalchemy
+watchdog
+Flask
+Flask-SQLAlchemy
 psycopg2-binary
 ultralytics
 torch
-opencv-python
-gunicorn
-python-dotenv
-watchdog
+opencv-python-headless
