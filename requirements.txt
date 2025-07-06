@@ -1,7 +1,8 @@
-watchdog
 Flask
 Flask-SQLAlchemy
 psycopg2-binary
+watchdog
 ultralytics
 torch
 opencv-python-headless
+python-dotenv

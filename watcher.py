@@ -1,74 +1,70 @@
 #!/usr/bin/env python
-import os, sys, time, logging
+import os
+import time
+import logging
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from sqlalchemy.exc import IntegrityError
 
-# startup banner — prints to stderr immediately
-print(
-    f"▶️  watcher.py PID={os.getpid()} cwd={os.getcwd()} "
-    f"watching={os.environ.get('WATCH_FOLDER')}",
-    file=sys.stderr,
-    flush=True
-)
+from watcher_app import create_app, db
+from watcher_app.models import Video, Detection
+from watcher_app.detection import run_detection
 
-from watcher_app.config     import Config
-from watcher_app.detection  import run_detection
-from watcher_app.models     import Video, Detection, db
-from watcher_app            import create_app
+# ─── Bootstrap ────────────────────────────────────────────────────────────────
+app = create_app()
+watch_folder = app.config["WATCH_FOLDER"]
+detect_folder = os.path.join(watch_folder, "detections")
+os.makedirs(detect_folder, exist_ok=True)
 
-# logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+    format="%(asctime)s [%(levelname)s] %(message)s",
 )
-logger = logging.getLogger(__name__)
-
-# bootstrap
-app = create_app()
-watch_folder = os.environ.get("WATCH_FOLDER", Config.WATCH_FOLDER)
-detect_folder= os.path.join(watch_folder, "detections")
-os.makedirs(watch_folder, exist_ok=True)
-os.makedirs(detect_folder, exist_ok=True)
+logger = logging.getLogger("watcher")
 
 class Handler(FileSystemEventHandler):
     ALLOWED_EXT = {".mp4", ".avi", ".mov", ".mkv"}
 
     def on_created(self, event):
-        if event.is_directory: return
-        _, ext = os.path.splitext(event.src_path)
-        if ext.lower() not in self.ALLOWED_EXT: return
+        if event.is_directory:
+            return
+        _, ext = os.path.splitext(event.src_path.lower())
+        if ext not in self.ALLOWED_EXT:
+            return
 
-        # wait for copy to finish
+        # wait for file to settle
         last, stable = -1, 0
         while stable < 2:
             try:
                 sz = os.path.getsize(event.src_path)
             except OSError:
-                time.sleep(1); continue
+                time.sleep(1)
+                continue
             if sz == last:
                 stable += 1
             else:
-                last, stable = sz, 0
+                stable, last = 0, sz
             time.sleep(1)
 
+        logger.info(f"detected file: {event.src_path}")
         with app.app_context():
             self._add_video(event.src_path)
 
     def on_deleted(self, event):
-        if event.is_directory: return
-        _, ext = os.path.splitext(event.src_path)
-        if ext.lower() not in self.ALLOWED_EXT: return
+        if event.is_directory:
+            return
+        _, ext = os.path.splitext(event.src_path.lower())
+        if ext not in self.ALLOWED_EXT:
+            return
 
+        logger.info(f"deleted file: {event.src_path}")
         with app.app_context():
             self._remove_video(event.src_path)
 
     def _add_video(self, full_path):
         filename = os.path.basename(full_path)
-
-        # 1) refuse duplicate
+        # 1) refuse duplicates
         if Video.query.filter_by(filename=filename).first():
-            logger.info(f"[watcher] Duplicate '{filename}' → deleting file")
+            logger.info(f"Duplicate '{filename}' → deleting file")
             try: os.remove(full_path)
             except: pass
             return
@@ -78,34 +74,32 @@ class Handler(FileSystemEventHandler):
         try:
             db.session.add(vid)
             db.session.commit()
-            logger.info(f"[watcher] ✅ Video row created (id={vid.id})")
-        except IntegrityError:
+            logger.info(f"✅ Video row created (id={vid.id})")
+        except Exception:
             db.session.rollback()
-            logger.error(f"[watcher] ❌ IntegrityError inserting '{filename}'")
+            logger.error(f"❌ IntegrityError inserting '{filename}'")
             try: os.remove(full_path)
             except: pass
             return
 
         # 3) run detection
         try:
-            det = run_detection(
-                full_path,
-                os.environ.get("YOLO_MODEL_PATH", Config.YOLO_MODEL_PATH)
-            )
-            logger.info(f"[watcher] 🦌 Detection succeeded for '{filename}'")
+            det = run_detection(full_path, app.config["YOLO_MODEL_PATH"])
+            logger.info(f"🦌 Detection succeeded for '{filename}'")
         except Exception as e:
             db.session.delete(vid); db.session.commit()
-            logger.error(f"[watcher] ❌ run_detection failed: {e}")
+            logger.error(f"❌ run_detection failed: {e}")
             return
 
         # 4) write JSON
-        import json
         json_path = os.path.join(detect_folder, f"{os.path.splitext(filename)[0]}.json")
         with open(json_path, "w") as jf:
+            import json
             json.dump(det, jf, indent=2)
 
         # 5) summarize & insert Detection row
-        classes_seen, max_counts = set(), {}
+        classes_seen = set()
+        max_counts   = {}
         for frame in det["frames"]:
             counts = {}
             for d in frame["detections"]:
@@ -119,15 +113,15 @@ class Handler(FileSystemEventHandler):
             video_id=vid.id,
             detection_json=det,
             classes_detected=",".join(sorted(classes_seen)) or None,
-            max_count_per_frame=max_counts or None
+            max_count_per_frame=max_counts or None,
         )
         db.session.add(rec)
         try:
             db.session.commit()
-            logger.info(f"[watcher] ✅ Detection row created for video_id={vid.id}")
+            logger.info(f"✅ Detection row created for video_id={vid.id}")
         except Exception as e:
             db.session.rollback()
-            logger.error(f"[watcher] ❌ Failed to insert Detection: {e}")
+            logger.error(f"❌ Failed to insert Detection: {e}")
 
     def _remove_video(self, full_path):
         filename = os.path.basename(full_path)
@@ -141,17 +135,17 @@ class Handler(FileSystemEventHandler):
             try: os.remove(json_path)
             except: pass
 
+        # cascade delete DB rows
         db.session.delete(vid)
         db.session.commit()
-        logger.info(f"[watcher] 🗑️ Removed DB records for '{filename}'")
+        logger.info(f"🗑️ Removed DB records for '{filename}'")
 
 if __name__ == "__main__":
     handler  = Handler()
     observer = Observer()
     observer.schedule(handler, watch_folder, recursive=False)
     observer.start()
-    logger.info(f"[watcher] Watching folder: {watch_folder}")
-
+    logger.info(f"Watching: {watch_folder}")
     try:
         while True:
             time.sleep(1)

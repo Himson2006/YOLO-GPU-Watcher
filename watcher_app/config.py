@@ -1,16 +1,16 @@
 import os
-basedir = os.path.abspath(os.path.dirname(__file__))
+from dotenv import load_dotenv
+
+# Load from .env into os.environ
+load_dotenv(override=True)
 
 class Config:
-    # must be set in env
-    SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL")
+    # SQLAlchemy
+    SQLALCHEMY_DATABASE_URI = os.environ["DATABASE_URL"]
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
-    # where to watch (env override or default to incoming/)
-    WATCH_FOLDER = os.environ.get(
-        "WATCH_FOLDER",
-        os.path.join(basedir, os.pardir, "incoming")
-    )
+    # Watch folder
+    WATCH_FOLDER = os.environ["WATCH_FOLDER"]
 
-    # where your best.pt lives
-    YOLO_MODEL_PATH = os.environ.get("YOLO_MODEL_PATH")
+    # YOLO model
+    YOLO_MODEL_PATH = os.environ["YOLO_MODEL_PATH"]
